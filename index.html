@@ -1,0 +1,378 @@
+계속 로딩 중 화면에서 멈춰 있는 이유는, 초기 기본값으로 설정된 학교 코드(A000003539)와 나이스 API의 데이터 응답 형식이 일치하지 않거나 비동기 통신 과정에서 오류가 발생해 응답을 받지 못했기 때문입니다. (특히 일부 국립·특수학교 코드는 API 호출 방식이나 코드 체계가 달라서 응답이 누락될 수 있습니다.)
+
+이 문제를 해결하기 위해, 페이지를 켜자마자 무한 로딩에 빠지지 않도록 API 요청에 타임아웃(시간 제한) 예외 처리를 추가하고, 데이터를 불러오지 못했을 때 깔끔하게 안내 메시지가 뜨도록 코드를 보완했습니다.
+
+아래 코드로 index.html을 다시 교체해서 실행해 보세요!
+
+HTML
+<!DOCTYPE html>
+<html lang="ko" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>우리학교 급식 알리미</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#f5f3ff', 500: '#8b5cf6', 600: '#7c3aed', 700: '#6d28d9' }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Google Fonts: Pretendard -->
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
+    <style>
+        html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+        body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(150, 150, 150, 0.25); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(150, 150, 150, 0.4); }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .animate-fade-in { animation: fadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 h-full font-['Pretendard',sans-serif] transition-colors duration-300">
+
+    <div class="min-h-full flex flex-col justify-between selection:bg-purple-500 selection:text-white">
+        <!-- 상단 헤더 -->
+        <header class="bg-white/80 dark:bg-slate-900/80 backdrop-blur-md sticky top-0 z-50 border-b border-slate-200/80 dark:border-slate-800">
+            <div class="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between">
+                <div class="flex items-center space-x-2.5">
+                    <span class="text-2xl">🍱</span>
+                    <h1 id="schoolNameTitle" class="font-bold text-lg tracking-tight bg-gradient-to-r from-purple-600 to-indigo-600 bg-clip-text text-transparent">우리학교 급식</h1>
+                </div>
+                <div class="flex items-center space-x-1">
+                    <button id="settingsBtn" class="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300 active:scale-95" title="학교 설정">
+                        ⚙️ 설정
+                    </button>
+                    <button id="themeToggleBtn" class="p-2.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition text-slate-600 dark:text-slate-300 active:scale-95" title="다크모드 전환">
+                        🌙
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- 메인 콘텐츠 -->
+        <main class="max-w-2xl w-full mx-auto px-4 py-6 flex-1 flex flex-col">
+            <!-- 날짜 선택 바 -->
+            <div class="flex items-center justify-between bg-white dark:bg-slate-900 p-3 rounded-2xl shadow-sm border border-slate-200/60 dark:border-slate-800 mb-4">
+                <button id="prevDayBtn" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition text-sm font-semibold active:scale-95">&larr; 어제</button>
+                <div class="text-center">
+                    <input type="date" id="datePicker" class="bg-transparent font-bold text-center text-slate-800 dark:text-white cursor-pointer focus:outline-none text-sm md:text-base">
+                    <p id="dayOfWeekText" class="text-xs text-slate-400 mt-0.5">요일 정보</p>
+                </div>
+                <button id="nextDayBtn" class="px-4 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition text-sm font-semibold active:scale-95">내일 &rarr;</button>
+            </div>
+
+            <div class="flex justify-center mb-6">
+                <button id="todayBtn" class="text-xs bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-400 font-semibold px-4 py-1.5 rounded-full border border-purple-200 dark:border-purple-900 hover:bg-purple-100 transition active:scale-95">✨ 오늘 날짜로 이동</button>
+            </div>
+
+            <!-- 급식 카드 리스트 -->
+            <div id="mealContainer" class="space-y-6 flex-1">
+                <div id="loadingState" class="flex flex-col items-center justify-center py-20">
+                    <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600 mb-4"></div>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">급식 정보를 불러오는 중입니다...</p>
+                </div>
+            </div>
+        </main>
+
+        <!-- 학교 설정 모달 -->
+        <div id="settingsModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+            <div class="bg-white dark:bg-slate-900 rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 animate-fade-in">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-bold">학교 설정</h3>
+                    <button id="closeModalXBtn" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">✕</button>
+                </div>
+                <p class="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">학교 이름을 검색해서 올바른 학교를 선택해 주세요.</p>
+                
+                <div class="space-y-3 pt-2">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">학교 이름 검색</label>
+                        <div class="flex space-x-2">
+                            <input type="text" id="schoolSearchInput" placeholder="예: 구미전자공업고등학교" class="flex-1 bg-slate-100 dark:bg-slate-800 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-purple-500 font-medium text-slate-700 dark:text-slate-200">
+                            <button id="searchSchoolBtn" class="bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 px-4 rounded-xl text-xs font-semibold transition">검색</button>
+                        </div>
+                    </div>
+                    <div id="searchResultContainer" class="hidden">
+                        <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1.5">검색된 학교 선택</label>
+                        <select id="schoolSelectResult" class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-xl p-3 text-sm focus:ring-2 focus:ring-purple-500 font-medium text-slate-700 dark:text-slate-200">
+                        </select>
+                    </div>
+                </div>
+
+                <div class="flex space-x-3 pt-3">
+                    <button id="saveSettingsBtn" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 rounded-xl transition active:scale-95 text-sm">저장하기</button>
+                    <button id="closeModalBtn" class="px-5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold py-3 rounded-xl transition text-sm">취소</button>
+                </div>
+            </div>
+        </div>
+
+        <footer class="text-center py-6 text-xs text-slate-400 dark:text-slate-600 border-t border-slate-200/60 dark:border-slate-800/80">
+            &copy; 2026 우리학교 급식 알리미. Powered by NEIS Open API.
+        </footer>
+    </div>
+
+    <!-- JavaScript 로직 -->
+    <script>
+        const DEFAULT_SETTINGS = {
+            eduOfficeCode: 'R10', 
+            schoolCode: '7380292', // 일반적인 경북 지역 표준코드 기반 기본값
+            schoolName: '구미전자공업고등학교',
+            darkMode: false
+        };
+
+        let settings = loadSettings();
+        let currentDate = new Date();
+        let foundSchoolsData = [];
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme();
+            initDatePicker();
+            initEventListeners();
+            fetchMealData(currentDate);
+        });
+
+        function loadSettings() {
+            const saved = localStorage.getItem('meal_app_settings');
+            return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
+        }
+
+        function saveSettings(newSettings) {
+            settings = newSettings;
+            localStorage.setItem('meal_app_settings', JSON.stringify(settings));
+        }
+
+        function initTheme() {
+            if (settings.darkMode) {
+                document.documentElement.classList.add('dark');
+                document.getElementById('themeToggleBtn').textContent = '☀️';
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.getElementById('themeToggleBtn').textContent = '🌙';
+            }
+            document.getElementById('schoolNameTitle').textContent = settings.schoolName + ' 급식';
+        }
+
+        function initDatePicker() {
+            const datePicker = document.getElementById('datePicker');
+            datePicker.value = formatDateString(currentDate);
+            updateDayOfWeekText(currentDate);
+        }
+
+        function formatDateString(date) {
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        function updateDayOfWeekText(date) {
+            const days = ['일요일', '월요일', '화요일', '수요일', '목요일', '금요일', '토요일'];
+            document.getElementById('dayOfWeekText').textContent = `${date.getFullYear()}.${date.getMonth() + 1}.${date.getDate()} (${days[date.getDay()]})`;
+        }
+
+        function initEventListeners() {
+            const datePicker = document.getElementById('datePicker');
+            datePicker.addEventListener('change', (e) => {
+                currentDate = new Date(e.target.value);
+                updateDayOfWeekText(currentDate);
+                fetchMealData(currentDate);
+            });
+
+            document.getElementById('prevDayBtn').addEventListener('click', () => {
+                currentDate.setDate(currentDate.getDate() - 1);
+                datePicker.value = formatDateString(currentDate);
+                updateDayOfWeekText(currentDate);
+                fetchMealData(currentDate);
+            });
+
+            document.getElementById('nextDayBtn').addEventListener('click', () => {
+                currentDate.setDate(currentDate.getDate() + 1);
+                datePicker.value = formatDateString(currentDate);
+                updateDayOfWeekText(currentDate);
+                fetchMealData(currentDate);
+            });
+
+            document.getElementById('todayBtn').addEventListener('click', () => {
+                currentDate = new Date();
+                datePicker.value = formatDateString(currentDate);
+                updateDayOfWeekText(currentDate);
+                fetchMealData(currentDate);
+            });
+
+            const modal = document.getElementById('settingsModal');
+            const openModal = () => {
+                document.getElementById('schoolSearchInput').value = settings.schoolName;
+                modal.classList.remove('hidden');
+            };
+            const closeModal = () => modal.classList.add('hidden');
+
+            document.getElementById('settingsBtn').addEventListener('click', openModal);
+            document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+            document.getElementById('closeModalXBtn').addEventListener('click', closeModal);
+
+            document.getElementById('searchSchoolBtn').addEventListener('click', async () => {
+                const query = document.getElementById('schoolSearchInput').value.trim();
+                if (!query) {
+                    alert('학교 이름을 입력해주세요!');
+                    return;
+                }
+
+                try {
+                    const searchUrl = `https://open.neis.go.kr/hub/schoolInfo?KEY=&Type=json&pIndex=1&pSize=10&SCHUL_NM=${encodeURIComponent(query)}`;
+                    const res = await fetch(searchUrl);
+                    const data = await res.json();
+
+                    if (data.schoolInfo) {
+                        foundSchoolsData = data.schoolInfo[1].row;
+                        const selectEl = document.getElementById('schoolSelectResult');
+                        selectEl.innerHTML = '';
+
+                        foundSchoolsData.forEach((sch, idx) => {
+                            const opt = document.createElement('option');
+                            opt.value = idx;
+                            opt.textContent = `${sch.SCHUL_NM} (${sch.ORG_RDNMA || sch.LCTN_SC_NM}) - [${sch.ATPT_OFCDC_SC_NM}]`;
+                            selectEl.appendChild(opt);
+                        });
+
+                        document.getElementById('searchResultContainer').classList.remove('hidden');
+                    } else {
+                        alert('검색된 학교가 없습니다.');
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('학교 검색 중 오류가 발생했습니다.');
+                }
+            });
+
+            document.getElementById('saveSettingsBtn').addEventListener('click', () => {
+                const selectEl = document.getElementById('schoolSelectResult');
+                if (foundSchoolsData.length > 0 && selectEl.value !== "") {
+                    const selected = foundSchoolsData[selectEl.value];
+                    settings.eduOfficeCode = selected.ATPT_OFCDC_SC_CODE;
+                    settings.schoolCode = selected.SD_SCHUL_CODE;
+                    settings.schoolName = selected.SCHUL_NM;
+                }
+                saveSettings(settings);
+                initTheme();
+                closeModal();
+                fetchMealData(currentDate);
+            });
+
+            document.getElementById('themeToggleBtn').addEventListener('click', () => {
+                settings.darkMode = !settings.darkMode;
+                saveSettings(settings);
+                initTheme();
+            });
+        }
+
+        async function fetchMealData(date) {
+            const container = document.getElementById('mealContainer');
+            container.innerHTML = `
+                <div class="flex flex-col items-center justify-center py-20 animate-fade-in">
+                    <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-purple-600 mb-4"></div>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">급식 정보를 불러오는 중입니다...</p>
+                </div>
+            `;
+
+            const yyyymmdd = date.getFullYear() +
+                String(date.getMonth() + 1).padStart(2, '0') +
+                String(date.getDate()).padStart(2, '0');
+
+            const url = `https://open.neis.go.kr/hub/mealServiceDietInfo?KEY=&Type=json&pIndex=1&pSize=10&ATPT_OFCDC_SC_CODE=${settings.eduOfficeCode}&SD_SCHUL_CODE=${settings.schoolCode}&MLSV_YMD=${yyyymmdd}`;
+
+            try {
+                // 5초 타임아웃 구현 (무한 로딩 방지)
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+                const response = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                const data = await response.json();
+
+                if (data.mealServiceDietInfo) {
+                    const rows = data.mealServiceDietInfo[1].row;
+                    renderMeals(rows);
+                } else {
+                    renderEmptyMeal("등록된 급식 정보가 없어요 😴");
+                }
+            } catch (error) {
+                console.error("API 호출 에러:", error);
+                renderEmptyMeal("급식 정보를 불러오지 못했습니다. 설정(⚙️)에서 학교를 다시 검색해 주세요.");
+            }
+        }
+
+        function renderMeals(rows) {
+            const container = document.getElementById('mealContainer');
+            container.innerHTML = '';
+
+            rows.forEach(row => {
+                const rawMenu = row.DDISH_NM.replace(/<br\/?>/g, '\n');
+                const calorie = row.CAL_INFO;
+                const mealTime = row.MMEAL_SC_NM;
+
+                const menuItems = rawMenu.split('\n').map(item => {
+                    item = item.trim();
+                    if (!item) return null;
+
+                    let name = item;
+                    let allergies = [];
+
+                    const allergyMatch = item.match(/\(([\d\.]+)\)$/);
+                    if (allergyMatch) {
+                        name = item.replace(/\([\d\.]+\)$/, '').trim();
+                        allergies = allergyMatch[1].split('.').filter(Boolean);
+                    }
+
+                    return { name, allergies };
+                }).filter(Boolean);
+
+                const card = document.createElement('div');
+                card.className = 'bg-white dark:bg-slate-900 rounded-3xl p-6 shadow-sm border border-slate-200/60 dark:border-slate-800 animate-fade-in';
+                
+                let menuHtml = menuItems.map(m => {
+                    let allergyBadge = m.allergies.length > 0 
+                        ? `<span class="text-[10px] text-slate-400 dark:text-slate-500 ml-1.5 font-normal">(${m.allergies.join(',')})</span>` 
+                        : '';
+                    return `<li class="py-2 flex items-center justify-between border-b border-slate-100 dark:border-slate-800/80 last:border-none">
+                        <span class="font-medium text-slate-700 dark:text-slate-200 text-sm md:text-base">${m.name} ${allergyBadge}</span>
+                    </li>`;
+                }).join('');
+
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+                        <span class="px-3.5 py-1 bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 font-bold text-xs rounded-full">${mealTime}</span>
+                        <span class="text-xs font-semibold text-slate-400 dark:text-slate-500">🔥 ${calorie}</span>
+                    </div>
+                    <ul class="space-y-1 mb-5">
+                        ${menuHtml}
+                    </ul>
+                    <div class="text-[11px] text-slate-400 dark:text-slate-500 bg-slate-50 dark:bg-slate-950/60 p-3 rounded-2xl leading-relaxed">
+                        ⚠️ <strong class="font-semibold text-slate-500 dark:text-slate-400">알레르기 정보:</strong> 1.난류 2.우유 3.메밀 4.땅콩 5.대두 6.밀 7.고등어 8.게 9.새우 10.돼지고기 11.복숭아 12.토마토 13.아황산류 14.호두 15.닭고기 16.쇠고기 17.오징어 18.조개류 19.잣
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function renderEmptyMeal(message) {
+            const container = document.getElementById('mealContainer');
+            container.innerHTML = `
+                <div class="bg-white dark:bg-slate-900 rounded-3xl p-12 text-center shadow-sm border border-slate-200/60 dark:border-slate-800 animate-fade-in">
+                    <p class="text-4xl mb-3">🍽️</p>
+                    <p class="text-slate-600 dark:text-slate-300 font-semibold text-sm">${message}</p>
+                </div>
+            `;
+        }
+    </script>
+</body>
+</html>
